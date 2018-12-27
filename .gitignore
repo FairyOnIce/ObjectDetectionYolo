@@ -1,2 +1,3 @@
-__pychache__/
+__pycache__/
 .ipynb_checkpoints/
+yolov2.weights
