@@ -12,8 +12,8 @@
 - [Part 3 Object Detection using YOLOv2 on Pascal VOC2012 - model](https://fairyonice.github.io/Part_3_Object_Detection_with_Yolo_using_VOC_2012_data_model.html)
 - [Part 4 Object Detection using YOLOv2 on Pascal VOC2012 - loss](https://fairyonice.github.io/Part_4_Object_Detection_with_Yolo_using_VOC_2012_data_loss.html)
 - [Part 5 Object Detection using YOLOv2 on Pascal VOC2012 - training](https://fairyonice.github.io/Part_5_Object_Detection_with_Yolo_using_VOC_2012_data_training.html)
-- [Part 6 Object Detection with Yolo using VOC 2012 data - inference on image](https://fairyonice.github.io/Part_6_Object_Detection_with_Yolo_using_VOC_2012_data_inference_image.html)
-- [Part 7 Object Detection with Yolo using VOC 2012 data - inference on video](https://fairyonice.github.io/Part_6_Object_Detection_with_Yolo_using_VOC_2012_data_inference_video.html)
+- [Part 6 Object Detection using YOLOv2 on Pascal VOC2012 - inference on image](https://fairyonice.github.io/Part_6_Object_Detection_with_Yolo_using_VOC_2012_data_inference_image.html)
+- [Part 7 Object Detection using YOLOv2 on Pascal VOC2012 - inference on video](https://fairyonice.github.io/Part_6_Object_Detection_with_Yolo_using_VOC_2012_data_inference_video.html)
 
 ## My GitHub repository 
 This repository contains all the ipython notebooks in this blog series and the funcitons (See backend.py). 
