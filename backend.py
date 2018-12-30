@@ -77,17 +77,19 @@ def parse_annotation(ann_dir, img_dir, labels=[]):
 ## --------------------------------------------------------------------------------- ##
 ## Part 2 Object Detection with Yolo using VOC 2014 data - input and output encoding
 ## --------------------------------------------------------------------------------- ##
+
 import numpy as np
 import cv2
 import copy
 class ImageReader(object):
-    def __init__(self,IMAGE_H,IMAGE_W):
+    def __init__(self,IMAGE_H,IMAGE_W, norm=None):
         '''
         IMAGE_H : the height of the rescaled image, e.g., 416
         IMAGE_W : the width of the rescaled image, e.g., 416
         '''
         self.IMAGE_H = IMAGE_H
         self.IMAGE_W = IMAGE_W
+        self.norm    = norm
         
     def fit(self,train_instance):
         '''
@@ -113,28 +115,35 @@ class ImageReader(object):
         }
         
         '''
+        if not isinstance(train_instance,dict):
+            train_instance = {'filename':train_instance}
+            
         image_name = train_instance['filename']
         image = cv2.imread(image_name)
 
         if image is None: print('Cannot find ', image_name)
-
-        h, w, c = image.shape
-        all_objs = copy.deepcopy(train_instance['object'])       
-            
+      
         # resize the image to standard size
         image = cv2.resize(image, (self.IMAGE_H, self.IMAGE_W))
         image = image[:,:,::-1]
+        if self.norm is not None:
+            image = self.norm(image)
+            
+        if "object" in train_instance.keys():
+            h, w, c = image.shape
+            all_objs = copy.deepcopy(train_instance['object'])     
 
-        # fix object's position and size
-        for obj in all_objs:
-            for attr in ['xmin', 'xmax']:
-                obj[attr] = int(obj[attr] * float(self.IMAGE_W) / w)
-                obj[attr] = max(min(obj[attr], self.IMAGE_W), 0)
-                
-            for attr in ['ymin', 'ymax']:
-                obj[attr] = int(obj[attr] * float(self.IMAGE_H) / h)
-                obj[attr] = max(min(obj[attr], self.IMAGE_H), 0)
-                
+            # fix object's position and size
+            for obj in all_objs:
+                for attr in ['xmin', 'xmax']:
+                    obj[attr] = int(obj[attr] * float(self.IMAGE_W) / w)
+                    obj[attr] = max(min(obj[attr], self.IMAGE_W), 0)
+
+                for attr in ['ymin', 'ymax']:
+                    obj[attr] = int(obj[attr] * float(self.IMAGE_H) / h)
+                    obj[attr] = max(min(obj[attr], self.IMAGE_H), 0)
+        else:
+            return image
         return image, all_objs
     
     
@@ -194,11 +203,18 @@ class BestAnchorBoxFinder(object):
         return(best_anchor,max_iou)    
     
 class BoundBox:
-    def __init__(self, xmin, ymin, xmax, ymax):
+    def __init__(self, xmin, ymin, xmax, ymax, confidence=None,classes=None):
         self.xmin, self.ymin = xmin, ymin
         self.xmax, self.ymax = xmax, ymax
-    
-    
+        # used during inference
+        self.confidence      = confidence
+        self.classes         = classes
+        if classes is not None:
+            self.label           = np.argmax(self.classes) 
+        if (confidence is not None) and (classes is not None):
+            self.score = self.classes[self.label]
+          
+            
 def rescale_centerxy(obj,config):
     '''
     obj:     dictionary containing xmin, xmax, ymin, ymax
@@ -223,7 +239,7 @@ def rescale_cebterwh(obj,config):
 from keras.utils import Sequence
 
 class SimpleBatchGenerator(Sequence):
-    def __init__(self, images, config, norm, shuffle=True):
+    def __init__(self, images, config, norm=None, shuffle=True):
         '''
         config : dictionary containing necessary hyper parameters for traning. e.g., 
             {
@@ -248,9 +264,8 @@ class SimpleBatchGenerator(Sequence):
         self.config["BOX"] = int(len(self.config['ANCHORS'])/2)
         self.config["CLASS"] = len(self.config['LABELS'])
         self.images = images
-        self.norm   = norm
         self.bestAnchorBoxFinder = BestAnchorBoxFinder(config['ANCHORS'])
-        self.imageReader = ImageReader(config['IMAGE_H'],config['IMAGE_W'])
+        self.imageReader = ImageReader(config['IMAGE_H'],config['IMAGE_W'],norm=norm)
         self.shuffle = shuffle
         if self.shuffle: 
             np.random.shuffle(self.images)
@@ -351,11 +366,7 @@ class SimpleBatchGenerator(Sequence):
                         true_box_index += 1
                         true_box_index = true_box_index % self.config['TRUE_BOX_BUFFER']
                             
-            # assign input image to x_batch
-            if self.norm != None: 
-                x_batch[instance_count] = self.norm(img)
-            else:       
-                x_batch[instance_count] = img
+            x_batch[instance_count] = img
             # increase instance counter in current batch
             instance_count += 1  
         return [x_batch, b_batch], y_batch
