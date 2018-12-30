@@ -211,14 +211,21 @@ class BoundBox:
     def __init__(self, xmin, ymin, xmax, ymax, confidence=None,classes=None):
         self.xmin, self.ymin = xmin, ymin
         self.xmax, self.ymax = xmax, ymax
-        # used during inference
+        ## the code below are used during inference
+        # probability
         self.confidence      = confidence
-        self.classes         = classes
-        if classes is not None:
-            self.label           = np.argmax(self.classes) 
-        if (confidence is not None) and (classes is not None):
-            self.score = self.classes[self.label]
-          
+        # class probaiblities [c1, c2, .. cNclass]
+        self.set_class(classes)
+        
+    def set_class(self,classes):
+        self.classes = classes
+        self.label   = np.argmax(self.classes) 
+        
+    def get_label(self):  
+        return(self.label)
+    
+    def get_score(self):
+        return(self.classes[self.label])
             
 def rescale_centerxy(obj,config):
     '''
@@ -1049,7 +1056,8 @@ def nonmax_suppression(boxes,nms_threshold):
     '''
     bestAnchorBoxFinder    = BestAnchorBoxFinder([])
     
-    CLASS = len(boxes[0].classes)
+    CLASS    = len(boxes[0].classes)
+    newboxes = []   
     # suppress non-maximal boxes
     for c in range(CLASS):
         # extract class probabilities of the c^th class from multiple bbox
@@ -1065,6 +1073,7 @@ def nonmax_suppression(boxes,nms_threshold):
             if boxes[index_i].classes[c] == 0:  
                 continue
             else:
+                newboxes.append(boxes[index_i])
                 for j in range(i+1, len(sorted_indices)):
                     index_j = sorted_indices[j]
                     
@@ -1074,4 +1083,5 @@ def nonmax_suppression(boxes,nms_threshold):
                         boxes[index_j].classes[c] = 0
                         
     
-    return boxes    
+    return newboxes    
+  
