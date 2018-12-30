@@ -91,6 +91,15 @@ class ImageReader(object):
         self.IMAGE_W = IMAGE_W
         self.norm    = norm
         
+    def encode_core(self,image, reorder_rgb=True):     
+        # resize the image to standard size
+        image = cv2.resize(image, (self.IMAGE_H, self.IMAGE_W))
+        if reorder_rgb:
+            image = image[:,:,::-1]
+        if self.norm is not None:
+            image = self.norm(image)
+        return(image)
+    
     def fit(self,train_instance):
         '''
         read in and resize the image, annotations are resized accordingly.
@@ -117,17 +126,13 @@ class ImageReader(object):
         '''
         if not isinstance(train_instance,dict):
             train_instance = {'filename':train_instance}
-            
+                
         image_name = train_instance['filename']
         image = cv2.imread(image_name)
 
         if image is None: print('Cannot find ', image_name)
       
-        # resize the image to standard size
-        image = cv2.resize(image, (self.IMAGE_H, self.IMAGE_W))
-        image = image[:,:,::-1]
-        if self.norm is not None:
-            image = self.norm(image)
+        image = self.encode_core(image, reorder_rgb=True)
             
         if "object" in train_instance.keys():
             h, w, c = image.shape
@@ -888,3 +893,185 @@ def custom_loss(y_true, y_pred):
 
     
     return loss
+
+
+# ========================================================================== ##
+# Part 6 Object Detection with Yolo using VOC 2012 data - inference on image
+# ========================================================================== ##
+
+class OutputRescaler(object):
+    def __init__(self,ANCHORS):
+        self.ANCHORS = ANCHORS
+
+    def _sigmoid(self, x):
+        return 1. / (1. + np.exp(-x))
+    def _softmax(self, x, axis=-1, t=-100.):
+        x = x - np.max(x)
+
+        if np.min(x) < t:
+            x = x/np.min(x)*t
+
+        e_x = np.exp(x)
+        return e_x / e_x.sum(axis, keepdims=True)
+    def get_shifting_matrix(self,netout):
+        
+        GRID_H, GRID_W, BOX = netout.shape[:3]
+        no = netout[...,0]
+        
+        ANCHORSw = self.ANCHORS[::2]
+        ANCHORSh = self.ANCHORS[1::2]
+       
+        mat_GRID_W = np.zeros_like(no)
+        for igrid_w in range(GRID_W):
+            mat_GRID_W[:,igrid_w,:] = igrid_w
+
+        mat_GRID_H = np.zeros_like(no)
+        for igrid_h in range(GRID_H):
+            mat_GRID_H[igrid_h,:,:] = igrid_h
+
+        mat_ANCHOR_W = np.zeros_like(no)
+        for ianchor in range(BOX):    
+            mat_ANCHOR_W[:,:,ianchor] = ANCHORSw[ianchor]
+
+        mat_ANCHOR_H = np.zeros_like(no) 
+        for ianchor in range(BOX):    
+            mat_ANCHOR_H[:,:,ianchor] = ANCHORSh[ianchor]
+        return(mat_GRID_W,mat_GRID_H,mat_ANCHOR_W,mat_ANCHOR_H)
+
+    def fit(self, netout):    
+        '''
+        netout  : np.array of shape (N grid h, N grid w, N anchor, 4 + 1 + N class)
+        
+        a single image output of model.predict()
+        '''
+        GRID_H, GRID_W, BOX = netout.shape[:3]
+        
+        (mat_GRID_W,
+         mat_GRID_H,
+         mat_ANCHOR_W,
+         mat_ANCHOR_H) = self.get_shifting_matrix(netout)
+
+
+        # bounding box parameters
+        netout[..., 0]   = (self._sigmoid(netout[..., 0]) + mat_GRID_W)/GRID_W # x      unit: range between 0 and 1
+        netout[..., 1]   = (self._sigmoid(netout[..., 1]) + mat_GRID_H)/GRID_H # y      unit: range between 0 and 1
+        netout[..., 2]   = (np.exp(netout[..., 2]) + mat_ANCHOR_W)/GRID_W      # width  unit: range between 0 and 1
+        netout[..., 3]   = (np.exp(netout[..., 3]) + mat_ANCHOR_H)/GRID_H      # height unit: range between 0 and 1
+        # rescale the confidence to range 0 and 1 
+        netout[..., 4]   = self._sigmoid(netout[..., 4])
+        expand_conf      = np.expand_dims(netout[...,4],-1) # (N grid h , N grid w, N anchor , 1)
+        # rescale the class probability to range between 0 and 1
+        # Pr(object class = k) = Pr(object exists) * Pr(object class = k |object exists)
+        #                      = Conf * P^c
+        netout[..., 5:]  = expand_conf * self._softmax(netout[..., 5:])
+        # ignore the class probability if it is less than obj_threshold 
+    
+        return(netout)
+    
+def find_high_class_probability_bbox(netout_scale, obj_threshold):
+    '''
+    == Input == 
+    netout : y_pred[i] np.array of shape (GRID_H, GRID_W, BOX, 4 + 1 + N class)
+    
+             x, w must be a unit of image width
+             y, h must be a unit of image height
+             c must be in between 0 and 1
+             p^c must be in between 0 and 1
+    == Output ==
+    
+    boxes  : list containing bounding box with Pr(object is in class C) > 0 for at least in one class C 
+    
+             
+    '''
+    GRID_H, GRID_W, BOX = netout_scale.shape[:3]
+    
+    boxes = []
+    for row in range(GRID_H):
+        for col in range(GRID_W):
+            for b in range(BOX):
+                # from 4th element onwards are confidence and class classes
+                classes = netout_scale[row,col,b,5:]
+                
+                if np.sum(classes) > 0:
+                    # first 4 elements are x, y, w, and h
+                    x, y, w, h = netout_scale[row,col,b,:4]
+                    confidence = netout_scale[row,col,b,4]
+                    box = BoundBox(x-w/2, y-h/2, x+w/2, y+h/2, confidence, classes)
+                    if box.score > obj_threshold:
+                        boxes.append(box)
+    return(boxes)
+
+import cv2, copy
+def draw_boxes(image, boxes, labels, verbose=False):
+    '''
+    image : np.array of shape (N height, N width, 3)
+    '''
+    def adjust_minmax(c,_max):
+        if c < 0:
+            c = 0   
+        if c > _max:
+            c = _max
+        return c
+    
+    image = copy.deepcopy(image)
+    image_h, image_w, _ = image.shape
+    score_rescaled  = np.array([box.score for box in boxes])
+    score_rescaled /= np.min(score_rescaled)
+    for sr, box in zip(score_rescaled,boxes):
+        xmin = adjust_minmax(int(box.xmin*image_w),image_w)
+        ymin = adjust_minmax(int(box.ymin*image_h),image_h)
+        xmax = adjust_minmax(int(box.xmax*image_w),image_w)
+        ymax = adjust_minmax(int(box.ymax*image_h),image_h)
+ 
+        
+        text = "{:15} {:4.3f}".format(labels[box.label], box.score)
+        if verbose:
+            print("{} xmin={:4.0f},ymin={:4.0f},xmax={:4.0f},ymax={:4.0f}".format(text,xmin,ymin,xmax,ymax,text))
+        cv2.rectangle(image, 
+                      pt1=(xmin,ymin), 
+                      pt2=(xmax,ymax), 
+                      color=(0,1,0), 
+                      thickness=sr)
+        cv2.putText(img       = image, 
+                    text      = text, 
+                    org       = (xmin+ 13, ymin + 13),
+                    fontFace  = cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale = 1e-3 * image_h,
+                    color     = (1, 0, 1),
+                    thickness = 1)
+        
+    return image
+
+def nonmax_suppression(boxes,nms_threshold):
+    '''
+    boxes : list containing "good" BoundBox of a frame
+            [BoundBox(),BoundBox(),...]
+    '''
+    bestAnchorBoxFinder    = BestAnchorBoxFinder([])
+    
+    CLASS = len(boxes[0].classes)
+    # suppress non-maximal boxes
+    for c in range(CLASS):
+        # extract class probabilities of the c^th class from multiple bbox
+        class_probability_from_bbxs = [box.classes[c] for box in boxes]
+
+        #sorted_indices[i] contains the i^th largest class probabilities
+        sorted_indices = list(reversed(np.argsort( class_probability_from_bbxs)))
+
+        for i in range(len(sorted_indices)):
+            index_i = sorted_indices[i]
+            
+            # if class probability is zero then ignore
+            if boxes[index_i].classes[c] == 0:  
+                continue
+            else:
+                for j in range(i+1, len(sorted_indices)):
+                    index_j = sorted_indices[j]
+                    
+                    # check if the selected i^th bounding box has high IOU with any of the remaining bbox
+                    # if so, the remaining bbox' class probabilities are set to 0.
+                    if bestAnchorBoxFinder.bbox_iou(boxes[index_i], boxes[index_j]) >= nms_threshold:
+                        boxes[index_j].classes[c] = 0
+                        
+    
+    return boxes    
