@@ -975,6 +975,7 @@ class OutputRescaler(object):
     
         return(netout)
     
+    
 def find_high_class_probability_bbox(netout_scale, obj_threshold):
     '''
     == Input == 
@@ -1004,12 +1005,12 @@ def find_high_class_probability_bbox(netout_scale, obj_threshold):
                     x, y, w, h = netout_scale[row,col,b,:4]
                     confidence = netout_scale[row,col,b,4]
                     box = BoundBox(x-w/2, y-h/2, x+w/2, y+h/2, confidence, classes)
-                    if box.score > obj_threshold:
+                    if box.get_score() > obj_threshold:
                         boxes.append(box)
     return(boxes)
 
 import cv2, copy
-def draw_boxes(image, boxes, labels, verbose=False):
+def draw_boxes(image, boxes, labels, obj_baseline=0.05,verbose=False):
     '''
     image : np.array of shape (N height, N width, 3)
     '''
@@ -1022,8 +1023,8 @@ def draw_boxes(image, boxes, labels, verbose=False):
     
     image = copy.deepcopy(image)
     image_h, image_w, _ = image.shape
-    score_rescaled  = np.array([box.score for box in boxes])
-    score_rescaled /= np.min(score_rescaled)
+    score_rescaled  = np.array([box.get_score() for box in boxes])
+    score_rescaled /= obj_baseline
     for sr, box in zip(score_rescaled,boxes):
         xmin = adjust_minmax(int(box.xmin*image_w),image_w)
         ymin = adjust_minmax(int(box.ymin*image_h),image_h)
@@ -1031,7 +1032,7 @@ def draw_boxes(image, boxes, labels, verbose=False):
         ymax = adjust_minmax(int(box.ymax*image_h),image_h)
  
         
-        text = "{:15} {:4.3f}".format(labels[box.label], box.score)
+        text = "{:10} {:4.3f}".format(labels[box.label], box.get_score())
         if verbose:
             print("{} xmin={:4.0f},ymin={:4.0f},xmax={:4.0f},ymax={:4.0f}".format(text,xmin,ymin,xmax,ymax,text))
         cv2.rectangle(image, 
@@ -1049,7 +1050,7 @@ def draw_boxes(image, boxes, labels, verbose=False):
         
     return image
 
-def nonmax_suppression(boxes,nms_threshold):
+def nonmax_suppression(boxes,iou_threshold,obj_threshold):
     '''
     boxes : list containing "good" BoundBox of a frame
             [BoundBox(),BoundBox(),...]
@@ -1057,7 +1058,7 @@ def nonmax_suppression(boxes,nms_threshold):
     bestAnchorBoxFinder    = BestAnchorBoxFinder([])
     
     CLASS    = len(boxes[0].classes)
-    newboxes = []   
+    index_boxes = []   
     # suppress non-maximal boxes
     for c in range(CLASS):
         # extract class probabilities of the c^th class from multiple bbox
@@ -1073,15 +1074,19 @@ def nonmax_suppression(boxes,nms_threshold):
             if boxes[index_i].classes[c] == 0:  
                 continue
             else:
-                newboxes.append(boxes[index_i])
+                index_boxes.append(index_i)
                 for j in range(i+1, len(sorted_indices)):
                     index_j = sorted_indices[j]
                     
                     # check if the selected i^th bounding box has high IOU with any of the remaining bbox
                     # if so, the remaining bbox' class probabilities are set to 0.
-                    if bestAnchorBoxFinder.bbox_iou(boxes[index_i], boxes[index_j]) >= nms_threshold:
-                        boxes[index_j].classes[c] = 0
+                    bbox_iou = bestAnchorBoxFinder.bbox_iou(boxes[index_i], boxes[index_j])
+                    if bbox_iou >= iou_threshold:
+                        classes = boxes[index_j].classes
+                        classes[c] = 0
+                        boxes[index_j].set_class(classes)
                         
+    newboxes = [ boxes[i] for i in index_boxes if boxes[i].get_score() > obj_threshold ]                
     
-    return newboxes    
+    return newboxes  
   
