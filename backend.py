@@ -962,8 +962,8 @@ class OutputRescaler(object):
         # bounding box parameters
         netout[..., 0]   = (self._sigmoid(netout[..., 0]) + mat_GRID_W)/GRID_W # x      unit: range between 0 and 1
         netout[..., 1]   = (self._sigmoid(netout[..., 1]) + mat_GRID_H)/GRID_H # y      unit: range between 0 and 1
-        netout[..., 2]   = (np.exp(netout[..., 2]) + mat_ANCHOR_W)/GRID_W      # width  unit: range between 0 and 1
-        netout[..., 3]   = (np.exp(netout[..., 3]) + mat_ANCHOR_H)/GRID_H      # height unit: range between 0 and 1
+        netout[..., 2]   = (np.exp(netout[..., 2]) * mat_ANCHOR_W)/GRID_W      # width  unit: range between 0 and 1
+        netout[..., 3]   = (np.exp(netout[..., 3]) * mat_ANCHOR_H)/GRID_H      # height unit: range between 0 and 1
         # rescale the confidence to range 0 and 1 
         netout[..., 4]   = self._sigmoid(netout[..., 4])
         expand_conf      = np.expand_dims(netout[...,4],-1) # (N grid h , N grid w, N anchor , 1)
