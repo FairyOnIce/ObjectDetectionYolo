@@ -128,14 +128,15 @@ class ImageReader(object):
             train_instance = {'filename':train_instance}
                 
         image_name = train_instance['filename']
-        image = cv2.imread(image_name)
 
+        image = cv2.imread(image_name)
+        h, w, c = image.shape
         if image is None: print('Cannot find ', image_name)
       
         image = self.encode_core(image, reorder_rgb=True)
             
         if "object" in train_instance.keys():
-            h, w, c = image.shape
+            
             all_objs = copy.deepcopy(train_instance['object'])     
 
             # fix object's position and size
@@ -1010,7 +1011,8 @@ def find_high_class_probability_bbox(netout_scale, obj_threshold):
     return(boxes)
 
 import cv2, copy
-def draw_boxes(image, boxes, labels, obj_baseline=0.05,verbose=False):
+import seaborn as sns
+def draw_boxes(_image, boxes, labels, obj_baseline=0.05,verbose=False):
     '''
     image : np.array of shape (N height, N width, 3)
     '''
@@ -1021,10 +1023,11 @@ def draw_boxes(image, boxes, labels, obj_baseline=0.05,verbose=False):
             c = _max
         return c
     
-    image = copy.deepcopy(image)
+    image = copy.deepcopy(_image)
     image_h, image_w, _ = image.shape
     score_rescaled  = np.array([box.get_score() for box in boxes])
     score_rescaled /= obj_baseline
+    color_rect,color_text = sns.color_palette("husl", 2)
     for sr, box in zip(score_rescaled,boxes):
         xmin = adjust_minmax(int(box.xmin*image_w),image_w)
         ymin = adjust_minmax(int(box.ymin*image_h),image_h)
@@ -1036,19 +1039,21 @@ def draw_boxes(image, boxes, labels, obj_baseline=0.05,verbose=False):
         if verbose:
             print("{} xmin={:4.0f},ymin={:4.0f},xmax={:4.0f},ymax={:4.0f}".format(text,xmin,ymin,xmax,ymax,text))
         cv2.rectangle(image, 
-                      pt1=(xmin,ymin), 
-                      pt2=(xmax,ymax), 
-                      color=(0,1,0), 
-                      thickness=sr)
+                      pt1       = (xmin,ymin), 
+                      pt2       = (xmax,ymax), 
+                      color     = color_rect, 
+                      thickness = sr)
         cv2.putText(img       = image, 
                     text      = text, 
                     org       = (xmin+ 13, ymin + 13),
                     fontFace  = cv2.FONT_HERSHEY_SIMPLEX,
                     fontScale = 1e-3 * image_h,
-                    color     = (1, 0, 1),
+                    color     = color_text,
                     thickness = 1)
         
     return image
+
+
 
 def nonmax_suppression(boxes,iou_threshold,obj_threshold):
     '''
@@ -1090,3 +1095,43 @@ def nonmax_suppression(boxes,iou_threshold,obj_threshold):
     
     return newboxes  
   
+## =========================== ##    
+## Load Pre-trained weights     
+## =========================== ##    
+
+class PreTrainedYOLODetector(object):
+    def __init__(self):
+        self.LABELS = ['aeroplane',  'bicycle', 'bird',  'boat',      'bottle', 
+                       'bus',        'car',      'cat',  'chair',     'cow',
+                       'diningtable','dog',    'horse',  'motorbike', 'person',
+                       'pottedplant','sheep',  'sofa',   'train',   'tvmonitor']
+        self.ANCHORS = np.array([1.07709888,  1.78171903,  # anchor box 1, width , height
+                                 2.71054693,  5.12469308,  # anchor box 2, width,  height
+                                10.47181473, 10.09646365,  # anchor box 3, width,  height
+                                 5.48531347,  8.11011331]) # anchor box 4, width,  height
+        self.BOX                    = int(len(self.ANCHORS)/2)
+        self.TRUE_BOX_BUFFER        = 50
+        self.IMAGE_H, self.IMAGE_W  = 416, 416
+        self.GRID_H,  self.GRID_W   = 13 , 13
+        self.CLASS                  = len(self.LABELS)
+        self.outputRescaler         = OutputRescaler(ANCHORS = self.ANCHORS)
+        self.imageReader            = ImageReader(self.IMAGE_H,
+                                                  self.IMAGE_W, 
+                                                  norm = lambda image : image / 255.)
+    def load(self,path_to_weights):
+        model, _          = define_YOLOv2(self.IMAGE_H,
+                                          self.IMAGE_W,
+                                          self.GRID_H,
+                                          self.GRID_W,
+                                          self.TRUE_BOX_BUFFER,
+                                          self.BOX,
+                                          self.CLASS, 
+                                  trainable = False)
+        self.model = model.load_weights(path_to_weights)
+        print("Pretrained weights are loaded")
+    def predict(self,X):
+        if len(X.shape) == 3:
+            X = X.reshape(1,X.shape[0],X.shape[1],X.shape[2])
+            dummy_array  = np.zeros((X.shape[0],1,1,1,self.TRUE_BOX_BUFFER,4))
+        y_pred   =  self.model.predict([X,dummy_array])
+        return(y_pred)
